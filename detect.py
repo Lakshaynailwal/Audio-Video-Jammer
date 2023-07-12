@@ -33,13 +33,20 @@ import os
 import platform
 import sys
 from pathlib import Path
+import socket
+import time
 
+datastr = ""
+# import serial
+# arduinoData = serial.Serial('com4' , 115200)
 
-import serial
-arduinoData = serial.Serial('com4' , 115200)
 
 
 import torch
+
+serverAddress = ("192.168.136.116" , 2222)  # replace this with current IP offred
+bufferSize = 1024                        
+UDPClient = socket.socket(socket.AF_INET , socket.SOCK_DGRAM)
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
@@ -148,6 +155,7 @@ def run(
                 p, im0, frame = path, im0s.copy(), getattr(dataset, 'frame', 0)
             #height and width of a frame
             h1, w1, c = im0.shape
+            indexcheck = 0
             p = Path(p)  # to Path
             save_path = str(save_dir / p.name)  # im.jpg
             txt_path = str(save_dir / 'labels' / p.stem) + ('' if dataset.mode == 'image' else f'_{frame}')  # im.txt
@@ -164,7 +172,7 @@ def run(
                 flagCellPhone = False; 
                 for c in det[:, 5].unique():
                     n = (det[:, 5] == c).sum()  # detections per class
-                    if(names[int(c)] == "cell phone"):
+                    if(names[int(c)] == "Camera"):
                         flagCellPhone = True
                     else:
                         flagCellPhone = False    
@@ -174,9 +182,10 @@ def run(
                 for *xyxy, conf, cls in reversed(det):
 
                     #getting the center coordinate of bBox
-
-                    if( flagCellPhone):
-                        
+                    # time.sleep(0.1)
+                    # indexcheck = indexcheck + 1
+                    if( flagCellPhone ):
+                        # print("conf = ",conf.item())
                         x_coor = ((xyxy[0]+xyxy[2])/2)
                         y_coor = ((xyxy[1]+xyxy[3])/2)
                         # print("The pixel coordinate_x is : ",x_coor.item())
@@ -185,15 +194,24 @@ def run(
                         #calculating diffrence / generating output
                         x_diff = (w1/2 - x_coor).item()
                         y_diff = (h1/2 - y_coor).item()
-                        
 
-                        ans = f'{x_diff} + {y_diff}'
-                        ans = ans + '\r'
+
+                        ans = checkAndComputeAngle(x_diff , y_diff) 
                         print(ans)
-                        
-                        print("Diffrence of x:",x_diff)
-                        print("Diffrence of y:",y_diff)
-                        arduinoData.write(ans.encode())    
+                        x1= ans.split(',')
+                        ans = f'{x1[0]},{x1[1]}\n '
+
+                        print(x_diff , y_diff)
+                        print()
+
+                        # print(ans)
+                        #msgFromClient="0,0"
+                        msgFromClient=ans
+                        bytesToSend=msgFromClient.encode('utf-8')
+                        UDPClient.sendto(bytesToSend, serverAddress)
+                        data,address=UDPClient.recvfrom(bufferSize)
+                        datastr = data.decode("utf-8")
+                        print(datastr , "\n")
 
                     if save_txt:  # Write to file
                         xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
@@ -204,7 +222,7 @@ def run(
                     if save_img or save_crop or view_img:  # Add bbox to image
 
                         c = int(cls)  # integer class
-                        if(names[c] == "cell phone"):
+                        if(names[c] == "Camera" ):
                             label = None if hide_labels else (names[c] if names[c] else f'{names[c]} {conf:.2f}')
                             annotator.box_label(xyxy, label, color=colors(c, True))
                     if save_crop:
@@ -219,7 +237,7 @@ def run(
                     cv2.namedWindow(str(p), cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)  # allow window resize (Linux)
                     cv2.resizeWindow(str(p), im0.shape[1], im0.shape[0])
                 cv2.imshow(str(p), im0)
-                cv2.waitKey(1000)  # 1 millisecond
+                cv2.waitKey(1)  # 1 millisecond
 
             # Save results (image with detections)
             if save_img:
@@ -292,6 +310,57 @@ def parse_opt():
 def main(opt):
     check_requirements(exclude=('tensorboard', 'thop'))
     run(**vars(opt))
+
+th =40  #threshold
+upToDown = -10
+leftToRight = -15
+
+def checkAndComputeAngle( a , b):
+
+    # time.sleep(1)
+    time.sleep(0.1)
+
+    if( a>0 and b>0 ):
+        
+        
+        if( abs(a)<th and abs(b)<th):
+            return "0,0"
+        elif (abs(a)<th and abs(b)>th):
+            return f" 0 , {-upToDown}"
+        elif( abs(a)>th and abs(b)<th ):
+            return f"{-leftToRight} , 0"
+        else:
+            return f"{-leftToRight} , {-upToDown}"
+
+    elif( a>0 and b<0 ):
+        if( abs(a)<th and abs(b)<th):
+            return "0,0"
+        elif (abs(a)<th and abs(b)>th):
+            return f" 0 , {upToDown}"
+        elif( abs(a)>th and abs(b)<th ):
+            return f"{-leftToRight} , 0"
+        else:
+            return f"{-leftToRight} , {upToDown}"
+
+    elif( a<0 and b>0 ):
+        if( abs(a)<th and abs(b)<th):
+            return "0,0"
+        elif (abs(a)<th and abs(b)>th):
+            return f"0 , {-upToDown}"
+        elif( abs(a)>th and abs(b)<th ):
+            return f"{leftToRight} , 0"
+        else:
+            return f"{leftToRight} , {-upToDown}"
+    else:
+        if( abs(a)<th and abs(b)<th):
+            return "0,0"
+        elif (abs(a)<th and abs(b)>th):
+            return f" 0 , {upToDown}"
+        elif( abs(a)>th and abs(b)<th ):
+            return f"{leftToRight} , 0"
+        else:
+            return f"{leftToRight} , {upToDown}"
+
 
 
 if __name__ == '__main__':
